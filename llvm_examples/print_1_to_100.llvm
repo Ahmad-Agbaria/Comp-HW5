@@ -1,0 +1,23 @@
+@.intFormat = internal constant [4 x i8] c"%d\0A\00"
+
+define i32 @main() {
+    %format_ptr = getelementptr [4 x i8], [4 x i8]* @.intFormat, i32 0, i32 0
+
+    %counter_ptr = alloca i32
+    store i32 1, i32* %counter_ptr
+    br label %loop_head 
+
+    loop_head:
+        %counter_val = load i32, i32* %counter_ptr
+        %lte_100 = icmp sle i32 %counter_val, 100
+        br i1 %lte_100, label %loop_body, label %loop_end
+    loop_body:
+        %printf_retval = call i32 (i8*, ...) @printf(i8* %format_ptr, i32 %counter_val)
+        %counter_inc = add i32 %counter_val, 1
+        store i32 %counter_inc, i32* %counter_ptr
+        br label %loop_head
+    loop_end:
+        ret i32 0    
+}
+
+declare i32 @printf(i8*, ...)

@@ -1,0 +1,475 @@
+%{
+#include <iostream>
+#include <stdio.h>
+#include "hw3_output.hpp"
+#include "SymbolTable.h"
+
+using namespace output;
+using namespace std;
+
+extern int yylex();
+extern int yylineno;
+extern char* yytext;
+
+int yyerror(const char*);
+
+SymbolTable * symbolTable;
+%}
+
+%code requires {
+   #include "GenericType.h"
+}
+%define api.value.type {GenericType*}
+
+%nonassoc STRING
+%nonassoc NUM
+%nonassoc ID
+%nonassoc COMMA
+%nonassoc SC
+%nonassoc CONTINUE
+%nonassoc BREAK
+%nonassoc WHILE
+%nonassoc IF
+%nonassoc RETURN
+%nonassoc TRUE
+%nonassoc FALSE
+%nonassoc OVERRIDE
+%nonassoc BOOL
+%nonassoc B
+%nonassoc BYTE
+%nonassoc INT
+%nonassoc VOID
+%right ASSIGN
+%left OR
+%left AND
+%left EQUALITY
+%left RELATIONAL
+%left ADDITIVE
+%left MULTIPLICATIVE
+%right NOT
+%left LPAREN
+%left LBRACE
+%left RPAREN
+%left RBRACE
+%right ELSE
+
+
+%%
+
+
+/** Program **/
+
+
+Program : M0 Funcs {
+    $$ = new Program();
+    if (!symbolTable->getMainEntry()) {
+        output::errorMainMissing();
+        exit(1);
+    }
+    symbolTable->closeScope();
+    delete symbolTable;
+    }
+
+M0: /*epsilon*/ {
+    symbolTable = new SymbolTable();
+    }
+
+
+/** Funcs **/
+
+
+Funcs: /*epsilon*/ {
+    $$ = new Funcs();
+    }
+
+Funcs: FuncDecl Funcs {
+    $$ = new Funcs();
+    }
+
+
+/** FuncDecl **/
+
+
+FuncDecl: OverRide RetType ID LPAREN Formals {
+    symbolTable->checkOverride(((IDType*)$3)->Name, ((RetType*)$2)->Type, ((Formals*)$5)->Vec, ((OverRide*)$1)->isOverride);
+    if(((IDType*)$3)->Name == "main" && ((OverRide*)$1)->isOverride) {
+        output::errorMainOverride(yylineno);
+        exit(1);
+    }
+    symbolTable->insertFunc(((IDType*)$3)->Name, ((RetType*)$2)->Type, ((Formals*)$5)->Vec, ((OverRide*)$1)->isOverride);
+    } RPAREN LBRACE Statements RBRACE {
+        symbolTable->closeScope();
+    }
+
+/** OverRide **/
+
+
+OverRide: /*epsilon*/ {
+    $$ = new OverRide(false);
+    }
+
+OverRide: OVERRIDE {
+    $$ = new OverRide(true);
+    }
+
+
+/** RetType **/
+
+
+RetType: Type {
+    $$ = new RetType(((TypeClass*)$1)->Type);
+    }
+
+RetType: VOID {
+    $$ = new RetType("VOID");
+    }
+
+
+/** Formals **/
+
+
+Formals: /*epsilon*/ {
+    $$ = new Formals();
+    }
+
+Formals: FormalsList {
+    $$ = ((Formals*)$1);
+    }
+
+
+/** FormalsList **/
+
+
+FormalsList: FormalDecl {
+    $$ = new FormalsList();
+    ((FormalsList*)$$)->addFormalDecl((FormalDecl*)$1);
+}
+
+FormalsList: FormalDecl COMMA FormalsList {
+    $$ = (FormalsList*)$3;
+    ((FormalsList*)$$)->addFormalDecl((FormalDecl*)$1);
+}
+
+
+/** FormalDecl **/
+
+
+FormalDecl: Type ID {
+    $$ = new FormalDecl(((TypeClass*)$1)->Type, ((IDType*)$2)->Name);
+    }
+
+
+/** Statements **/
+
+
+Statements: Statement {
+    $$ = new Statements();
+    }
+
+Statements: Statements Statement {
+    $$ = new Statements();
+    }
+
+
+/** Statement **/
+
+
+Statement: LBRACE M2 Statements RBRACE {
+    $$ = new Statement();
+    symbolTable->closeScope();
+}
+
+Statement: Type ID SC {
+    if(symbolTable->symbolExists(((IDType*)$2)->Name)) {
+        output::errorDef(yylineno,((IDType*)$2)->Name);
+        exit(1);
+    }
+    $$ = new Statement();
+    symbolTable->insertVar(((TypeClass*)$1)->Type, ((IDType*)$2)->Name);
+}
+
+Statement: Type ID ASSIGN Exp SC {
+    if(symbolTable->symbolExists(((IDType*)$2)->Name)) {
+        output::errorDef(yylineno,((IDType*)$2)->Name);
+        exit(1);
+    }
+    if ((((TypeClass*)$1)->Type) == (((Exp*)$4)->Type) || ((((TypeClass*)$1)->Type) == "INT" && (((Exp*)$4)->Type) == "BYTE")) {
+        $$ = new Statement();
+        symbolTable->insertVar(((TypeClass*)$1)->Type, ((IDType*)$2)->Name);
+    } else {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+}
+
+Statement: ID ASSIGN Exp SC {
+    const Symbol *tmp = symbolTable->getVar(((IDType*)$1)->Name);
+    if(tmp == nullptr) {
+        output::errorUndef(yylineno,((IDType*)$1)->Name);
+        exit(1);
+    }
+    string varType = tmp->getVarType();
+    if(varType == (((Exp*)$3)->Type)|| varType == "INT" && (((Exp*)$3)->Type) == "BYTE") {
+        $$ = new Statement();
+    } else {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+}
+
+Statement: Call SC {
+    $$ = new Statement();
+}
+
+Statement: RETURN SC {
+    if(symbolTable->getRetType() != "VOID") {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Statement();
+}
+
+Statement: RETURN Exp SC {
+    if (symbolTable->getRetType() != "VOID" && ((symbolTable->getRetType() == (((Exp*)$2)->Type)) || ((((Exp*)$2)->Type) == "BYTE" && symbolTable->getRetType()=="INT"))) {
+       $$ = new Statement();
+    } else {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+}
+
+Statement: IF M2 LPAREN ExpM RPAREN Statement{
+    $$ = new Statement();
+    symbolTable->closeScope();
+}
+
+Statement: IF M2 LPAREN ExpM RPAREN Statement ELSE M3 Statement {
+    $$ = new Statement();
+    symbolTable->closeScope();
+}
+
+Statement: WHILE M1 LPAREN ExpM RPAREN Statement {
+    $$ = new Statement();
+    symbolTable->closeScope(true);
+}
+
+ExpM: Exp {
+    if(((Exp*)$1)->Type!="BOOL") {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = (Exp*)$1;
+}
+
+Statement: BREAK SC {
+    if (symbolTable->getActiveLoops() == 0) {
+        output::errorUnexpectedBreak(yylineno);
+         exit(1);
+    }
+    $$ = new Statement();
+}
+
+Statement: CONTINUE SC {
+    if (symbolTable->getActiveLoops() == 0) {
+        output::errorUnexpectedContinue(yylineno);
+        exit(1);
+    }
+    $$ = new Statement();
+}
+
+
+/** Call **/
+
+
+Call: ID LPAREN ExpList RPAREN {
+    vector<Symbol> tmp = symbolTable->getFuncs(((IDType*)$1)->Name);
+    if (tmp.empty()) {
+        output::errorUndefFunc(yylineno, ((IDType*)$1)->Name);
+        exit(1);
+    }
+    string returnType = symbolTable->validateExpList(((IDType*)$1)->Name, (ExpList*)$3);
+    $$ = new Call(returnType);
+    }
+
+Call: ID LPAREN RPAREN {
+    vector<Symbol> tmp = symbolTable->getFuncs(((IDType*)$1)->Name);
+    if (tmp.empty()) {
+        output::errorUndefFunc(yylineno, ((IDType*)$1)->Name);
+        exit(1);
+    }
+    string returnType = symbolTable->validateExpList(((IDType*)$1)->Name, nullptr);
+    $$ = new Call(returnType);
+    }
+
+
+/** ExpList **/
+
+
+ExpList: Exp {
+    $$ = new ExpList();
+    ((ExpList*)$$)->addExp((Exp*)$1);
+    }
+
+ExpList: Exp COMMA ExpList {
+    $$ = (ExpList*)$3;
+    ((ExpList*)$$)->addExp((Exp*)$1);
+    }
+
+
+/** Type **/
+
+
+Type: INT {
+    $$ = new TypeClass("INT");
+    }
+
+Type: BYTE {
+    $$ = new TypeClass("BYTE");
+    }
+
+Type: BOOL {
+    $$ = new TypeClass("BOOL");
+    }
+
+
+/** Exp **/
+
+
+Exp: LPAREN Exp RPAREN {
+    $$ = (Exp*)$2;
+    }
+
+Exp: Exp MULTIPLICATIVE Exp{
+    if ((((Exp*)$1)->Type != "INT" and ((Exp*)$1)->Type != "BYTE") || (((Exp*)$3)->Type != "INT" and ((Exp*)$3)->Type != "BYTE")) {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    if (((((Exp*)$1)->Type) == "INT") || ((((Exp*)$3)->Type) == "INT")) {
+        $$ = new Exp("INT");
+    } else {
+        $$ = new Exp("BYTE");
+    }
+}
+
+Exp: Exp ADDITIVE Exp {
+    if ((((Exp*)$1)->Type != "INT" and ((Exp*)$1)->Type != "BYTE") || (((Exp*)$3)->Type != "INT" and ((Exp*)$3)->Type != "BYTE")) {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    if (((((Exp*)$1)->Type) == "INT") || ((((Exp*)$3)->Type) == "INT")) {
+        $$ = new Exp("INT");
+    } else {
+        $$ = new Exp("BYTE");
+    }
+}
+
+Exp: ID {
+    const Symbol *tmp = symbolTable->getVar(((IDType*)$1)->Name);
+    if (tmp == nullptr) {
+        output::errorUndef(yylineno, (((IDType*)$1)->Name));
+        exit(1);
+    }
+    $$ = new Exp(tmp->getVarType());
+    }
+
+Exp: Call {
+    $$ = new Exp(((Call*)$1)->Type);
+    }
+
+Exp: NUM {
+    $$ = new Exp("INT");
+    }
+
+Exp: NUM B {
+    if((((NumType*)$1)->Value) > 255) {
+        output::errorByteTooLarge(yylineno, to_string(((NumType*)$1)->Value));
+        exit(1);
+    }
+    $$ = new Exp("BYTE");
+}
+
+Exp: STRING {
+    $$ = new Exp("STRING");
+    }
+
+Exp: TRUE {
+    $$ = new Exp("BOOL");
+    }
+
+Exp: FALSE {
+    $$ = new Exp("BOOL");
+    }
+
+Exp: NOT Exp {
+    if (((Exp*)$2)->Type != "BOOL") {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Exp("BOOL");
+    }
+
+Exp: Exp AND Exp {
+    if (((Exp*)$1)->Type != "BOOL" || ((Exp*)$3)->Type != "BOOL") {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Exp("BOOL");
+    }
+
+Exp: Exp OR Exp {
+    if (((Exp*)$1)->Type != "BOOL" || ((Exp*)$3)->Type != "BOOL") {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Exp("BOOL");
+    }
+
+Exp: Exp EQUALITY Exp {
+    if ((((Exp*)$1)->Type != "INT" and ((Exp*)$1)->Type != "BYTE") || (((Exp*)$3)->Type != "INT" and ((Exp*)$3)->Type != "BYTE")) {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Exp("BOOL");
+    }
+
+Exp: Exp RELATIONAL Exp {
+    if ((((Exp*)$1)->Type != "INT" and ((Exp*)$1)->Type != "BYTE") || (((Exp*)$3)->Type != "INT" and ((Exp*)$3)->Type != "BYTE")) {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Exp("BOOL");
+    }
+
+Exp: LPAREN Type RPAREN Exp {
+    if ((((TypeClass*)$2)->Type == "INT" || ((TypeClass*)$2)->Type == "BYTE") && (((Exp*)$4)->Type == "INT" || ((Exp*)$4)->Type == "BYTE")) {
+        $$ = new Exp(((TypeClass*)$2)->Type);
+    } else {
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    }
+
+M1: /*epsilon*/ {
+    symbolTable->insertTable(true);
+}
+
+M2: /*epsilon*/ {
+    symbolTable->insertTable();
+}
+
+M3: /*epsilon*/ {
+    symbolTable->closeScope();
+    symbolTable->insertTable();
+}
+%%
+
+
+int main() {
+    return yyparse();
+}
+
+int yyerror(const char* s) {
+    output::errorSyn(yylineno);
+    exit(1);
+    return 0;
+}

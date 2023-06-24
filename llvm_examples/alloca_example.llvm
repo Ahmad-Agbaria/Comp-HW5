@@ -1,0 +1,50 @@
+declare i32 @printf(i8*, ...)
+declare void @exit(i32)
+@.int_specifier = constant [4 x i8] c"%d\0A\00"
+@.str_specifier = constant [4 x i8] c"%s\0A\00"
+
+define void @printi(i32) {
+    %spec_ptr = getelementptr [4 x i8], [4 x i8]* @.int_specifier, i32 0, i32 0
+    call i32 (i8*, ...) @printf(i8* %spec_ptr, i32 %0)
+    ret void
+}
+
+define void @print(i8*) {
+    %spec_ptr = getelementptr [4 x i8], [4 x i8]* @.str_specifier, i32 0, i32 0
+    call i32 (i8*, ...) @printf(i8* %spec_ptr, i8* %0)
+    ret void
+}
+
+define i32 @main() {
+    allocate_arr:
+        %size = add i32 10, 0
+        %arr = alloca i32, i32 %size
+        br label %init_loop
+
+    ; a[i] = i
+    init_loop:
+        %init_index = phi i32 [0, %allocate_arr], [%init_index_inc, %init_loop]
+        
+        %element_ptr = getelementptr i32, i32* %arr, i32 %init_index
+        store i32 %init_index, i32* %element_ptr
+        
+        %init_index_inc = add i32 %init_index, 1
+        %init_loop_cond = icmp slt i32 %init_index_inc, %size
+        br i1 %init_loop_cond, label %init_loop, label %print_loop
+
+    ; print a[i]
+    print_loop:
+        %print_index = phi i32 [0, %init_loop], [%print_index_inc, %print_loop]
+        
+        %print_ptr = getelementptr i32, i32* %arr, i32 %print_index
+        %element = load i32, i32* %print_ptr
+        call void @printi(i32 %element)
+
+        %print_index_inc = add i32 %print_index, 1
+        %print_loop_cond = icmp slt i32 %print_index_inc, %size
+        br i1 %print_loop_cond, label %print_loop, label %finish
+
+    finish:
+        ret i32 0
+}
+
